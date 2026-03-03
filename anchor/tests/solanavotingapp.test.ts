@@ -1,145 +1,75 @@
-import {
-  Blockhash,
-  createSolanaClient,
-  createTransaction,
-  generateKeyPairSigner,
-  Instruction,
-  isSolanaError,
-  KeyPairSigner,
-  signTransactionMessageWithSigners,
-} from 'gill'
-import {
-  fetchSolanavotingapp,
-  getCloseInstruction,
-  getDecrementInstruction,
-  getIncrementInstruction,
-  getInitializeInstruction,
-  getSetInstruction,
-} from '../src'
-// @ts-ignore error TS2307 suggest setting `moduleResolution` but this is already configured
-import { loadKeypairSignerFromFile } from 'gill/node'
+import { BankrunProvider, startAnchor } from 'anchor-bankrun'
+import { Solanavotingapp } from '../target/types/solanavotingapp'
 
-const { rpc, sendAndConfirmTransaction } = createSolanaClient({ urlOrMoniker: process.env.ANCHOR_PROVIDER_URL! })
+import { BN, Program } from '@coral-xyz/anchor'
+import { PublicKey } from '@solana/web3.js'
+import { expect, beforeAll } from 'vitest'
+import IDL from '../target/idl/solanavotingapp.json'
+
+const votingAddress = new PublicKey('Count3AcZucFDPSFBAeHkQ6AvttieKUkyJ8HiQGhQwe')
 
 describe('solanavotingapp', () => {
-  let payer: KeyPairSigner
-  let solanavotingapp: KeyPairSigner
+  let context
+  let provider
+  let solanavotingappProgram: Program<Solanavotingapp>
 
   beforeAll(async () => {
-    solanavotingapp = await generateKeyPairSigner()
-    payer = await loadKeypairSignerFromFile(process.env.ANCHOR_WALLET!)
+    context = await startAnchor('', [{ name: 'solanavotingapp', programId: votingAddress }], [])
+    provider = new BankrunProvider(context)
+    solanavotingappProgram = new Program<Solanavotingapp>(IDL, provider)
   })
 
-  it('Initialize Solanavotingapp', async () => {
-    // ARRANGE
-    expect.assertions(1)
-    const ix = getInitializeInstruction({ payer: payer, solanavotingapp: solanavotingapp })
+  it('Initialize Poll', async () => {
+    console.log('start anchor')
 
-    // ACT
-    await sendAndConfirm({ ix, payer })
+    await solanavotingappProgram.methods
+      .initializePoll(new BN(1), new BN(0), new BN(1967368969), 'What is your favorite color?')
+      .rpc()
 
-    // ASSER
-    const currentSolanavotingapp = await fetchSolanavotingapp(rpc, solanavotingapp.address)
-    expect(currentSolanavotingapp.data.count).toEqual(0)
+    const [pollAddress] = PublicKey.findProgramAddressSync([new BN(1).toArrayLike(Buffer, 'le', 8)], votingAddress)
+
+    const poll = await solanavotingappProgram.account.poll.fetch(pollAddress)
+
+    expect(poll.pollId.toNumber()).toEqual(1)
+    expect(poll.description).toEqual('What is your favorite color?')
+    expect(poll.pollStart.toNumber()).toBeLessThan(poll.pollEnd.toNumber())
   })
 
-  it('Increment Solanavotingapp', async () => {
-    // ARRANGE
-    expect.assertions(1)
-    const ix = getIncrementInstruction({
-      solanavotingapp: solanavotingapp.address,
-    })
+  it('initialize candidate', async () => {
+    await solanavotingappProgram.methods.initializeCandidate('Red', new BN(1)).rpc()
+    await solanavotingappProgram.methods.initializeCandidate('Blue', new BN(1)).rpc()
 
-    // ACT
-    await sendAndConfirm({ ix, payer })
+    const [redAddress] = PublicKey.findProgramAddressSync(
+      [new BN(1).toArrayLike(Buffer, 'le', 8), Buffer.from('Red')],
+      votingAddress,
+    )
 
-    // ASSERT
-    const currentCount = await fetchSolanavotingapp(rpc, solanavotingapp.address)
-    expect(currentCount.data.count).toEqual(1)
+    const redCandidate = await solanavotingappProgram.account.candidate.fetch(redAddress)
+
+    console.log(redCandidate)
+    expect(redCandidate.candidateVote.toNumber()).toEqual(0)
+
+    const [blueAddress] = PublicKey.findProgramAddressSync(
+      [new BN(1).toArrayLike(Buffer, 'le', 8), Buffer.from('Blue')],
+      votingAddress,
+    )
+
+    const blueCandidate = await solanavotingappProgram.account.candidate.fetch(blueAddress)
+
+    console.log(blueCandidate)
+    expect(blueCandidate.candidateVote.toNumber()).toEqual(0)
   })
 
-  it('Increment Solanavotingapp Again', async () => {
-    // ARRANGE
-    expect.assertions(1)
-    const ix = getIncrementInstruction({ solanavotingapp: solanavotingapp.address })
+  it('vote', async () => {
+    await solanavotingappProgram.methods.vote('Red', new BN(1)).rpc()
 
-    // ACT
-    await sendAndConfirm({ ix, payer })
+    const [redAddress] = PublicKey.findProgramAddressSync(
+      [new BN(1).toArrayLike(Buffer, 'le', 8), Buffer.from('Red')],
+      votingAddress,
+    )
+    const redCandidate = await solanavotingappProgram.account.candidate.fetch(redAddress)
 
-    // ASSERT
-    const currentCount = await fetchSolanavotingapp(rpc, solanavotingapp.address)
-    expect(currentCount.data.count).toEqual(2)
-  })
-
-  it('Decrement Solanavotingapp', async () => {
-    // ARRANGE
-    expect.assertions(1)
-    const ix = getDecrementInstruction({
-      solanavotingapp: solanavotingapp.address,
-    })
-
-    // ACT
-    await sendAndConfirm({ ix, payer })
-
-    // ASSERT
-    const currentCount = await fetchSolanavotingapp(rpc, solanavotingapp.address)
-    expect(currentCount.data.count).toEqual(1)
-  })
-
-  it('Set solanavotingapp value', async () => {
-    // ARRANGE
-    expect.assertions(1)
-    const ix = getSetInstruction({ solanavotingapp: solanavotingapp.address, value: 42 })
-
-    // ACT
-    await sendAndConfirm({ ix, payer })
-
-    // ASSERT
-    const currentCount = await fetchSolanavotingapp(rpc, solanavotingapp.address)
-    expect(currentCount.data.count).toEqual(42)
-  })
-
-  it('Set close the solanavotingapp account', async () => {
-    // ARRANGE
-    expect.assertions(1)
-    const ix = getCloseInstruction({
-      payer: payer,
-      solanavotingapp: solanavotingapp.address,
-    })
-
-    // ACT
-    await sendAndConfirm({ ix, payer })
-
-    // ASSERT
-    try {
-      await fetchSolanavotingapp(rpc, solanavotingapp.address)
-    } catch (e) {
-      if (!isSolanaError(e)) {
-        throw new Error(`Unexpected error: ${e}`)
-      }
-      expect(e.message).toEqual(`Account not found at address: ${solanavotingapp.address}`)
-    }
+    console.log(redCandidate)
+    expect(redCandidate.candidateVote.toNumber()).toEqual(1)
   })
 })
-
-// Helper function to keep the tests DRY
-let latestBlockhash: Awaited<ReturnType<typeof getLatestBlockhash>> | undefined
-async function getLatestBlockhash(): Promise<Readonly<{ blockhash: Blockhash; lastValidBlockHeight: bigint }>> {
-  if (latestBlockhash) {
-    return latestBlockhash
-  }
-  return await rpc
-    .getLatestBlockhash()
-    .send()
-    .then(({ value }) => value)
-}
-async function sendAndConfirm({ ix, payer }: { ix: Instruction; payer: KeyPairSigner }) {
-  const tx = createTransaction({
-    feePayer: payer,
-    instructions: [ix],
-    version: 'legacy',
-    latestBlockhash: await getLatestBlockhash(),
-  })
-  const signedTransaction = await signTransactionMessageWithSigners(tx)
-  return await sendAndConfirmTransaction(signedTransaction)
-}

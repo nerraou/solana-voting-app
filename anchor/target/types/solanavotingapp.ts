@@ -5,7 +5,7 @@
  * IDL can be found at `target/idl/solanavotingapp.json`.
  */
 export type Solanavotingapp = {
-  "address": "Count3AcZucFDPSFBAeHkQ6AvttieKUkyJ8HiQGhQwe",
+  "address": "3bpJKXpciNCFRJ96wR8VbjNR94ahAEkENU8qsCwgPTWh",
   "metadata": {
     "name": "solanavotingapp",
     "version": "0.1.0",
